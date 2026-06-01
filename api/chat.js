@@ -1,16 +1,23 @@
-// Boma Yangu AI - Vercel Serverless Chat Endpoint
-// LLM: Cerebras gpt-oss-120b | Retrieval: HF cosine similarity + keyword fallback
+// Boma Yangu AI v2 - Vercel Serverless Chat Endpoint
+// LLM: Groq llama3-8b-8192 (replaces Cerebras gpt-oss-120b)
+// Retrieval: HF cosine similarity + keyword fallback → Pinecone
+// CHANGES FROM V1:
+//   1. Cerebras → Groq (import + call block only)
+//   2. CEREBRAS_API_URL and CEREBRAS_MODEL constants removed
+//   3. Everything else: untouched
 
 import { retrieve, formatContext } from "../lib/retrieval.js";
+import Groq from 'groq-sdk';
 
 // -- Constants ----------------------------------------------------------------
 
-const CEREBRAS_API_URL = "https://api.cerebras.ai/v1/chat/completions";
-const CEREBRAS_MODEL = "gpt-oss-120b";
-const MAX_TOKENS       = 900;   // ← CHANGED: 700 → 900 (prevents step-by-step cutoff)
+const MAX_TOKENS       = 900;
 const TEMPERATURE      = 0.3;
 const MAX_HISTORY      = 6;
-const TOP_K            = 5;    // ← CHANGED: 3 → 5 (richer context for county-specific queries)
+const TOP_K            = 5;
+
+// Groq client — replaces Cerebras
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 // -- Source URL Map -----------------------------------------------------------
 
@@ -173,7 +180,7 @@ const SYSTEM_PROMPT = [
   "   - Use **bold** for key figures, amounts, dates, and deadlines",
   "   - Use numbered lists for steps",
   "   - Use bullet points for requirements or options",
-  "   - Keep under 300 words unless the user asks for more detail",  // ← CHANGED: 220 → 300
+  "   - Keep under 300 words unless the user asks for more detail",
   "5. End every factual answer with ONE clear next action: a URL, phone number, or offer to explain more.",
   "6. If the user mentions a county, tailor the answer to that county's projects if known.",
   "7. If the user mentioned their income or employment status earlier in the chat, remember it — do NOT ask again.",
@@ -254,46 +261,34 @@ export default async function handler(req, res) {
     "\nINSTRUCTION: Synthesize the above into a warm clear answer. Cite gov URLs from SOURCE URL LEGEND. Mirror user language exactly." +
     langRule;
 
-  // -- Call Cerebras ----------------------------------------------------------
-  const cerebrasKey = process.env.CEREBRAS_API_KEY;
-  if (!cerebrasKey) return res.status(500).json({ error: "Server configuration error." });
+  // -- Call Groq (replaces Cerebras — same structure, same response shape) ----
+  if (!process.env.GROQ_API_KEY) {
+    return res.status(500).json({ error: "Server configuration error." });
+  }
 
-  let aiRes;
+  let reply;
   try {
-    aiRes = await fetch(CEREBRAS_API_URL, {
-      method: "POST",
-      headers: {
-        "Authorization": "Bearer " + cerebrasKey,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: CEREBRAS_MODEL,
-        temperature: TEMPERATURE,
-        max_tokens: MAX_TOKENS,
-        messages: [
-          { role: "system", content: systemWithContext },
-          ...trimmedMessages,
-        ],
-      }),
+    const completion = await groq.chat.completions.create({
+      model:       'llama3-8b-8192',
+      temperature: TEMPERATURE,
+      max_tokens:  MAX_TOKENS,
+      messages: [
+        { role: "system", content: systemWithContext },
+        ...trimmedMessages,
+      ],
     });
+
+    reply = completion.choices?.[0]?.message?.content;
+
   } catch (err) {
-    console.error("[chat] Cerebras fetch error:", err.message);
+    // Handle Groq rate limit same way original handled Cerebras rate limit
+    if (err?.status === 429) {
+      console.warn("[chat] Groq rate limited");
+      return res.status(429).json({ error: "AI is busy. Please wait a moment and try again." });
+    }
+    console.error("[chat] Groq fetch error:", err.message);
     return res.status(502).json({ error: "Failed to reach AI service. Please try again." });
   }
-
-  if (aiRes.status === 429) {
-    console.warn("[chat] Cerebras rate limited");
-    return res.status(429).json({ error: "AI is busy. Please wait a moment and try again." });
-  }
-
-  if (!aiRes.ok) {
-    const errText = await aiRes.text();
-    console.error("[chat] Cerebras error [" + aiRes.status + "]:", errText);
-    return res.status(502).json({ error: "AI service error. Please try again shortly." });
-  }
-
-  const aiData = await aiRes.json();
-  const reply  = aiData.choices?.[0]?.message?.content;
 
   if (!reply) {
     return res.status(500).json({ error: "Empty response. Please try again." });
