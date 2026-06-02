@@ -269,7 +269,7 @@ export default async function handler(req, res) {
   let reply;
   try {
     const completion = await groq.chat.completions.create({
-      model:       'llama3-8b-8192',
+      model:       'llama-3.3-70b-versatile',
       temperature: TEMPERATURE,
       max_tokens:  MAX_TOKENS,
       messages: [
