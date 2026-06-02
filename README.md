@@ -1,235 +1,185 @@
-# Boma Yangu AI
+Boma Yangu AI v2 is a production RAG (Retrieval-Augmented Generation) system that helps Kenyan citizens navigate the Affordable Housing Programme (AHP) and National Housing Development Fund (NHDF).
+Users ask questions in English or Kiswahili — the AI retrieves the most relevant information from a curated knowledge base of 62 official documents and answers with source citations, in the user's language.
+This is v2 — an upgraded pipeline over the original project. The core change: vectors moved from an in-memory JSON file to a persistent Pinecone cloud index, and Cerebras was replaced with Groq.
 
-**Kenya Housing Intelligence** — an AI-powered assistant that helps Kenyans understand the Affordable Housing Programme (AHP), National Housing Development Fund (NHDF), housing levy, eligibility, county projects, and application steps.
+Live Demo
+https://boma-yangu-v2.vercel.app
+Try asking:
 
-| | |
-|---|---|
-| **Production** | [https://boma-yangu-ai.vercel.app](https://boma-yangu-ai.vercel.app) |
-| **Stack** | Static HTML + Vercel serverless + RAG (retrieval-augmented generation) |
-| **LLM** | [Cerebras](https://cerebras.ai) `gpt-oss-120b` |
-| **Embeddings** | Hugging Face `sentence-transformers/all-MiniLM-L6-v2` |
+"How do I register for Boma Yangu?"
+"What is the housing levy rate?"
+"Nahitaji nyumba Nairobi, nianze wapi?"
+"What projects are available in Mombasa?"
 
-> **Disclaimer:** This is an independent educational tool. It is **not** the official Boma Yangu government portal. Always verify critical decisions at [bomayangu.go.ke](https://www.bomayangu.go.ke) or by calling **0700 832 832**.
 
----
+Stack
+LayerV1 (original)V2 (this repo)EmbeddingsHuggingFace all-MiniLM-L6-v2HuggingFace all-MiniLM-L6-v2Vector storagedata/boma-vectors.json in-memoryPinecone cloud index (persistent)LLMCerebras gpt-oss-120bGroq llama-3.3-70b-versatileHostingVercel (free)Vercel (free)Cost$0$0
 
-## Table of contents
+Architecture
+User question (English or Kiswahili)
+           │
+           ▼
+  HuggingFace Inference API
+  sentence-transformers/all-MiniLM-L6-v2
+  → converts question to 384-dimensional vector
+           │
+           ▼
+  Pinecone boma-yangu-v2 index
+  → cosine similarity search across 601 vectors
+  → returns top 5 most relevant knowledge chunks
+           │
+           ▼
+  api/chat.js — builds system prompt with context
+           │
+           ▼
+  Groq llama-3.3-70b-versatile
+  → answers using ONLY retrieved context
+  → matches user language (EN/SW)
+  → cites official government sources
+           │
+           ▼
+  Answer with source URL + trust signal
+Request path:
 
-1. [What this project does](#what-this-project-does)
-2. [Features](#features)
-3. [Architecture (high level)](#architecture-high-level)
-4. [Repository structure](#repository-structure)
-5. [Quick start](#quick-start)
-6. [Environment variables](#environment-variables)
-7. [Documentation index](#documentation-index)
-8. [Deployment](#deployment)
-9. [Maintenance checklist](#maintenance-checklist)
-10. [Official references](#official-references)
+User sends message from index.html → POST /api/chat with messages and optional county
+api/chat.js extracts last user message, calls retrieve(query, { topK: 5, county })
+lib/retrieval.js embeds query via HuggingFace (with retry + timeout handling)
+Top 5 chunks retrieved from Pinecone with optional county metadata filter
+Chunks formatted into context block, injected into system prompt
+Groq returns answer → sent to client as { reply }
 
----
 
-## What this project does
-
-Boma Yangu AI combines three layers:
-
-1. **Curated knowledge base** — 63 Markdown documents (~62 topical files + regional/cultural context) written for Kenyan housing questions, scams, tone, and county specifics.
-2. **Vector retrieval (RAG)** — User questions are embedded and matched against 601 pre-built text chunks stored in `data/boma-vectors.json`.
-3. **Conversational AI** — Retrieved context is injected into a detailed system prompt; [Cerebras](https://api.cerebras.ai) generates answers in English or Kiswahili with citations to official URLs.
-
-A separate **Eligibility Checker** (`/eligibility`) runs entirely in the browser: income band, levy estimate, Nairobi project matching, and personalised next steps — no API call required.
-
----
-
-## Features
-
-| Feature | Location | Description |
-|---------|----------|-------------|
-| Bilingual chat | `index.html` | English / Kiswahili UI and AI replies matched to user language |
-| County filter | `index.html` sidebar | Sends selected county to `/api/chat` for retrieval bias |
-| RAG chat | `/api/chat` | Top-5 KB chunks + system prompt → Cerebras |
-| Landing cards & chips | `index.html` | Quick prompts; Eligibility card navigates to `/eligibility` |
-| Eligibility wizard | `eligibility.html` | 3-question form → band, projects, steps |
-| Dark mode | Both pages | `data-theme` toggle |
-| Scam warnings | KB + eligibility UI | Prominent “registration is FREE” messaging |
-
----
-
-## Architecture (high level)
-
-```mermaid
-flowchart TB
-  subgraph Client["Browser"]
-    IDX[index.html<br/>Chat UI]
-    ELIG[eligibility.html<br/>Client-side checker]
-  end
-
-  subgraph Vercel["Vercel"]
-    API["/api/chat<br/>api/chat.js"]
-    RET["lib/retrieval.js"]
-    VEC[(data/boma-vectors.json<br/>601 chunks)]
-  end
-
-  subgraph External["External APIs"]
-    HF["Hugging Face<br/>Embeddings"]
-    CB["Cerebras<br/>gpt-oss-120b"]
-  end
-
-  subgraph Build["Local / CI (manual)"]
-    KB[knowledge/**/*.md]
-    BUILD[script/buildVectors.js]
-  end
-
-  IDX -->|POST messages, county| API
-  ELIG -->|no backend| ELIG
-  API --> RET
-  RET --> VEC
-  RET --> HF
-  API --> CB
-  KB --> BUILD --> VEC
-```
-
-**Request path (chat):**
-
-1. User sends message from `index.html` → `POST /api/chat` with `messages` and optional `county`.
-2. `api/chat.js` takes the last user message, runs `retrieve(query, { topK: 5, county })`.
-3. `lib/retrieval.js` embeds the query via Hugging Face (or falls back to keyword search).
-4. Top chunks are formatted and appended to the system prompt with a source URL legend.
-5. Cerebras returns the assistant reply as JSON `{ reply }`.
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for deeper design notes.
-
----
-
-## Repository structure
-
-```
-Boma Yangu Ai/
-├── index.html              # Main chat application (single-page)
-├── eligibility.html        # Eligibility checker (client-side only)
-├── vercel.json             # URL rewrites (/eligibility → eligibility.html)
-├── package.json            # Node deps (dotenv for build script)
+Repository Structure
+boma-yangu-v2/
+├── index.html               # Main chat application (single-page)
+├── eligibility.html         # Eligibility checker (client-side only)
+├── vercel.json              # URL rewrites (/eligibility → eligibility.html)
+├── package.json             # Node deps — pinecone, groq-sdk, dotenv
 │
 ├── api/
-│   └── chat.js             # Vercel serverless: RAG + Cerebras
+│   └── chat.js              # Vercel serverless: RAG pipeline + Groq
 ├── lib/
-│   └── retrieval.js        # Vector + keyword retrieval
+│   └── retrieval.js         # Pinecone vector search + HF embedding + keyword fallback
 ├── script/
-│   └── buildVectors.js     # Offline: KB → embeddings → JSON
+│   ├── buildVectors.js      # Offline: KB markdown → HF embeddings → JSON
+│   └── uploadToPinecone.js  # One-time: push boma-vectors.json → Pinecone
 ├── data/
-│   └── boma-vectors.json   # Precomputed embeddings (deployed with app)
+│   └── boma-vectors.json    # 601 pre-computed vectors (384 dims each)
 │
-├── knowledge/              # Source of truth (Markdown)
-│   ├── core/               # Programme facts, levy, lottery, FAQ, legal…
-│   ├── Citizens/           # Employed, self-employed, diaspora, civil servants…
-│   ├── Regions/            # County & regional project context
-│   ├── Context/            # Tone, culture, Sheng, scams navigation (20 files)
-│   ├── security/           # Scam patterns
-│   └── Employers.md/       # Employer levy guide
-│
-└── docs/                   # Extended documentation (this repo)
-    ├── ARCHITECTURE.md
-    ├── KNOWLEDGE_BASE.md
-    ├── API.md
-    ├── FRONTEND.md
-    ├── DEPLOYMENT.md
-    └── DEVELOPMENT.md
-```
+└── knowledge/               # Source of truth — 62 Markdown documents
+    ├── core/                # Programme facts, levy, allocation, legal, FAQ
+    ├── Citizens/            # Employed, self-employed, diaspora, civil servants
+    ├── Regions/             # County and regional project context
+    ├── Context/             # Tone, culture, Sheng, scam navigation
+    └── security/            # Scam patterns and warnings
 
----
+Key Features
+FeatureDetailsBilingualDetects English vs Kiswahili — replies in the user's languageRAG pipelineRetrieves top 5 KB chunks before every answer — no hallucination from thin airPersistent vectors601 vectors in Pinecone — survive deployments, cold starts, everythingCounty filterSidebar lets users filter by county — Pinecone metadata filter scopes retrievalKeyword fallbackIf HuggingFace times out, keyword search keeps the app answeringSource citationsEvery answer cites the relevant official government URLScam warningsProminent messaging — registration is FREE, official portal onlyEligibility checkerClient-side only — income band, Nairobi projects, personalised next stepsDark modeFull dark/light theme toggle
 
-## Quick start
+Environment Variables
+VariableRequiredPurposeHF_TOKENYesHuggingFace Inference API — embedding queriesGROQ_API_KEYYesGroq chat completions — LLM answersPINECONE_API_KEYYesPinecone vector database — retrieval
+Local file: .env.local (gitignored — never commit keys)
 
-### Prerequisites
+Quick Start
+Prerequisites
 
-- [Node.js](https://nodejs.org/) 18+ (for vector rebuild only)
-- [Vercel CLI](https://vercel.com/docs/cli) (for deployment)
-- API keys: **Cerebras**, **Hugging Face** (see below)
+Node.js 18+
+Vercel CLI: npm install -g vercel
+API keys: HuggingFace, Groq, Pinecone (all free tier)
 
-### Local preview (static pages)
+Local development
+bash# Clone the repo
+git clone https://github.com/Netz1-blip/boma-yangu-v2.git
+cd boma-yangu-v2
 
-Serve the project root with any static server. API routes need Vercel dev:
-
-```bash
+# Install dependencies
 npm install
+
+# Add your keys to .env.local
+cp .env.example .env.local
+# Edit .env.local with your keys
+
+# Link to Vercel (first time only)
+npx vercel link
+
+# Pull env vars
+npx vercel env pull .env.local
+
+# Start local dev server
 npx vercel dev
-```
+Open http://localhost:3000
+Upload vectors to Pinecone (one time only)
+If setting up a fresh Pinecone index:
+bash# Create index in Pinecone dashboard first:
+# Name: boma-yangu-v2 | Dimensions: 384 | Metric: cosine | AWS us-east-1
 
-Open `http://localhost:3000` (default Vercel dev port). Chat requires `.env.local` with valid keys.
+# Then push all 601 vectors
+node script/uploadToPinecone.js
+This reads data/boma-vectors.json (pre-computed embeddings) and uploads to Pinecone. Run once — vectors persist permanently.
+Deploy to production
+bashvercel --prod
 
-### Rebuild knowledge vectors (after KB edits)
+Retrieval Design
+Why Pinecone over local JSON
+ConcernJSON (v1)Pinecone (v2)Cold startLoads entire file into RAMInstant connectionPersistenceResets on function restartPermanentAdding documentsRequires rebuild + redeployPush new vectors anytimeMulti-clientOne JSON per deploymentNamespaces — isolated per clientScaleSlow at 10k+ vectorsBuilt for millions
+Embedding model
+sentence-transformers/all-MiniLM-L6-v2 — outputs 384-dimensional vectors. The same model embeds both the knowledge base documents (at build time) and user questions (at runtime). This is critical — different models produce incompatible vector spaces.
+County filtering
+Vectors are tagged with county metadata at upload time. When a user selects a county in the UI, Pinecone filters to chunks tagged for that county OR national:
+javascriptfilter: {
+  $or: [
+    { county: { $eq: county.toLowerCase() } },
+    { county: { $eq: 'national' } },
+  ]
+}
+Keyword fallback
+If HuggingFace times out (free tier rate limits), lib/retrieval.js falls back to keyword scoring — word overlap between query and chunks. Not as precise as vector search but keeps the app answering under all conditions.
 
-```bash
-# .env.local must contain HF_TOKEN=
+Knowledge Base
+62 Markdown documents across 5 categories:
+
+core/ — Programme rules, housing levy, eligibility, allocation, tenant purchase scheme, legal framework, FAQ
+Citizens/ — Employed workers, self-employed, informal/jua kali, civil servants, diaspora, youth
+Regions/ — Nairobi, Mombasa, Kisumu, Nakuru, Kakamega, Kiambu, Kajiado, Eldoret
+Context/ — Kenyan tone, Sheng language, scam navigation, cultural context
+security/ — Scam patterns, fraud warnings, official channel verification
+
+All documents include last_verified dates and source citations.
+Rebuilding vectors (after KB edits)
+bash# .env.local must contain HF_TOKEN
 node script/buildVectors.js
-```
 
-Then redeploy so `data/boma-vectors.json` is updated on production.
+# Then re-upload to Pinecone
+node script/uploadToPinecone.js
 
----
-
-## Environment variables
-
-| Variable | Required | Where | Purpose |
-|----------|----------|-------|---------|
-| `CEREBRAS_API_KEY` | Yes (runtime) | Vercel project env | Cerebras chat completions |
-| `HF_TOKEN` | Yes (runtime + build) | Vercel + `.env.local` | Hugging Face embedding API |
-
-**Local file:** `.env.local` (gitignored). Never commit API keys.
-
-**Vercel:** Project → Settings → Environment Variables → add for Production, Preview, and Development.
-
----
-
-## Documentation index
-
-| Document | Contents |
-|----------|----------|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Components, data flow, RAG pipeline, failure modes |
-| [docs/KNOWLEDGE_BASE.md](docs/KNOWLEDGE_BASE.md) | KB folders, authoring rules, vector build process |
-| [docs/API.md](docs/API.md) | `/api/chat` request/response, errors, prompt design |
-| [docs/FRONTEND.md](docs/FRONTEND.md) | `index.html` and `eligibility.html` behaviour |
-| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Vercel setup, rewrites, production deploy |
-| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Local dev, testing, contributing, release workflow |
-
----
-
-## Deployment
-
-Production is hosted on **Vercel** (project: `boma-yangu-ai`).
-
-```bash
+# Deploy
 vercel --prod
-```
 
-Details: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+What Changed From V1
+V2 is a targeted infrastructure upgrade. The knowledge base, UI, language handling, and system prompt are identical to v1.
+Files changed:
 
----
+lib/retrieval.js — Pinecone replaces local JSON search
+api/chat.js — Groq replaces Cerebras (2 lines changed)
+package.json — added @pinecone-database/pinecone, groq-sdk
+script/uploadToPinecone.js — new one-time upload script
 
-## Maintenance checklist
+Files unchanged:
 
-When updating housing facts or projects:
+index.html — chat UI
+eligibility.html — eligibility checker
+knowledge/ — all 62 documents
+data/boma-vectors.json — all 601 vectors
+vercel.json — routing config
 
-1. Edit relevant files under `knowledge/` (include `last_verified` / sources in front matter where used).
-2. Run `node script/buildVectors.js` and commit `data/boma-vectors.json`.
-3. Update hardcoded project data in `eligibility.html` if Nairobi listings change.
-4. Deploy with `vercel --prod`.
-5. Smoke-test: chat in EN/SW, county filter, `/eligibility` flow, and a known FAQ question.
 
----
+Official References
+ResourceURLBoma Yangu portalhttps://www.bomayangu.go.keHousing & Urban Developmenthttps://www.housingandurban.go.keKRA (Housing Levy)https://www.kra.go.keNSSFhttps://www.nssf.or.keAffordable Housing Act 2024Government legal database
 
-## Official references
-
-| Resource | URL |
-|----------|-----|
-| Boma Yangu portal | https://www.bomayangu.go.ke |
-| Housing & Urban Development | https://www.housingandurban.go.ke |
-| KRA (Housing Levy) | https://www.kra.go.ke |
-| Affordable Housing Act 2024 | Government legal database / AHB publications |
-
----
-
-## License & attribution
-
-Knowledge base content is written for public education about Kenya’s Affordable Housing Programme. **Powered by Cerebras** (`gpt-oss-120b`) as shown in the UI. Third-party fonts: Google Fonts (Syne, Plus Jakarta Sans, DM Mono).
-
-For questions about this codebase, start with [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+About The Builder
+Built by Netz (Neithen Muhong) — RAG Engineer, Nairobi, Kenya.
+Origin: Was an attaché at Kajiado Huduma Centre. Watched Kenyan citizens queue hours for basic government information. Built AI to fix it.
+Core service: RAG systems — taking an organisation's existing data and turning it into AI their staff and customers can talk to directly.
+LinkedIn: linkedin.com/in/neithen-muhong
+Signature: Netz | RAG Engineer
+Tagline: Building AI for Africa 🇰🇪
