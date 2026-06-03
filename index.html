@@ -824,10 +824,12 @@ function setLang(l) {
   if (ws) ws.textContent = c.wSub;
   const gr = document.getElementById('greeting');
   if (gr) gr.textContent = c.greeting;
-  document.getElementById('inp').placeholder = c.ph;
+  const inp = document.getElementById('inp');
+  if (inp) inp.placeholder = c.ph;
   const inp2 = document.getElementById('inp2');
   if (inp2) inp2.placeholder = c.ph;
-  document.getElementById('hint').textContent = c.hint;
+  const hint = document.getElementById('hint');
+  if (hint) hint.textContent = c.hint;
   const h2 = document.getElementById('hint2');
   if (h2) h2.textContent = c.hint;
   document.getElementById('status-txt').textContent = c.statusOK;
@@ -897,14 +899,23 @@ function renderCards() {
   });
 }
 
+function getActiveInput() {
+  return document.getElementById('inp') || document.getElementById('inp2');
+}
+
+function setInputValue(txt) {
+  const el = getActiveInput();
+  if (el) el.value = txt;
+}
+
 function handleChip(txt) {
-  document.getElementById('inp').value = txt;
+  setInputValue(txt);
   sendMsg();
 }
 
 function quickAsk(btn) {
   const txt = btn.querySelector('.nt').textContent;
-  document.getElementById('inp').value = txt;
+  setInputValue(txt);
   sendMsg();
   closePanel();
 }
@@ -1011,18 +1022,10 @@ if (inp2El) {
   });
 }
 
-/* sendMsg2 proxies to sendMsg using inp2 */
+/* sendMsg2 — composer uses #inp2; sendMsg reads via getActiveInput() */
 function sendMsg2() {
   const inp2 = document.getElementById('inp2');
-  const inp  = document.getElementById('inp') || { value: '' };
-  if (inp2 && inp2.value.trim()) {
-    const fakeInp = { value: inp2.value, style: {} };
-    const orig = document.getElementById('inp');
-    if (orig) orig.value = inp2.value;
-    sendMsg();
-    inp2.value = '';
-    inp2.style.height = 'auto';
-  }
+  if (inp2 && inp2.value.trim()) sendMsg();
 }
 
 /* ════════════════════════
@@ -1063,7 +1066,7 @@ function handleRetry(btn) {
    SEND
 ════════════════════════ */
 async function sendMsg(retryMode = false) {
-  const inpEl = document.getElementById('inp');
+  const inpEl = getActiveInput();
   let text = inpEl ? inpEl.value.trim() : '';
   if (retryMode && lastUserMessage) {
     text = lastUserMessage;
