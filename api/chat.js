@@ -74,6 +74,23 @@ function detectLang(text) {
   return hits >= 2 ? 'sw' : 'en';
 }
 
+const HOTLINE = "0700 832 832";
+
+function noKbReply(lang) {
+  if (lang === "sw") {
+    return (
+      "Samahani — sina taarifa maalum kuhusu swali lako katika hifadhi ya maarifa yangu kwa sasa.\n\n" +
+      "Tafadhali tembelea **https://www.bomayangu.go.ke** au piga **" + HOTLINE + "** kwa taarifa rasmi za hivi karibuni.\n\n" +
+      "> Jaribu swali lingine kuhusu nyumba nafuu, ushuru, usajili, au miradi ya kaunti."
+    );
+  }
+  return (
+    "I don't have specific information on that question in my knowledge base right now.\n\n" +
+    "Please visit **https://www.bomayangu.go.ke** or call **" + HOTLINE + "** for the latest official guidance.\n\n" +
+    "> Try rephrasing, or ask about affordable housing, levy, registration, or county projects."
+  );
+}
+
 // -- System Prompt ------------------------------------------------------------
 
 const SYSTEM_PROMPT = [
@@ -243,25 +260,38 @@ export default async function handler(req, res) {
     : "\n\nFINAL INSTRUCTION — LANGUAGE LOCK: The user wrote in ENGLISH. Your entire response MUST be in ENGLISH ONLY. Every word. No Swahili at all.";
 
   // -- Retrieve KB context ----------------------------------------------------
-  let contextBlock = "";
   let retrievedChunks = [];
   try {
     retrievedChunks = await retrieve(query, { topK: TOP_K, county: county || null });
-    contextBlock = formatContext(retrievedChunks);
   } catch (err) {
     console.error("[chat] Retrieval error:", err.message);
-    contextBlock = "NO_KB_MATCH: Knowledge base unavailable. Direct user to boma.go.ke or 0700 832 832.";
+    retrievedChunks = [];
   }
 
+  const hasContext = retrievedChunks.length > 0;
+
+  // No KB match — do not call the LLM (prevents generic / invented answers)
+  if (!hasContext) {
+    console.warn("[chat] No KB chunks for query — returning portal guidance only");
+    return res.status(200).json({
+      reply: noKbReply(lang),
+      hasContext: false,
+    });
+  }
+
+  const contextBlock = formatContext(retrievedChunks);
   const systemWithContext =
     SYSTEM_PROMPT + "\n\n" +
     "=== KNOWLEDGE BASE CONTEXT ===\n" +
     contextBlock + "\n" +
     buildSourcesLegend(retrievedChunks) +
-    "\nINSTRUCTION: Synthesize the above into a warm clear answer. Cite gov URLs from SOURCE URL LEGEND. Mirror user language exactly." +
+    "\nINSTRUCTION: Answer using ONLY facts stated in KNOWLEDGE BASE CONTEXT above. " +
+    "Do NOT invent prices, paybills, project names, dates, or procedures. " +
+    "Use Section 3 of the system prompt only for general concepts not covered in the context — never for specific figures. " +
+    "Synthesize into a warm clear answer. Cite gov URLs from SOURCE URL LEGEND. Mirror user language exactly." +
     langRule;
 
-  // -- Call Groq (replaces Cerebras — same structure, same response shape) ----
+  // -- Call Groq only when KB context exists ----------------------------------
   if (!process.env.GROQ_API_KEY) {
     return res.status(500).json({ error: "Server configuration error." });
   }
@@ -281,7 +311,6 @@ export default async function handler(req, res) {
     reply = completion.choices?.[0]?.message?.content;
 
   } catch (err) {
-    // Handle Groq rate limit same way original handled Cerebras rate limit
     if (err?.status === 429) {
       console.warn("[chat] Groq rate limited");
       return res.status(429).json({ error: "AI is busy. Please wait a moment and try again." });
@@ -294,5 +323,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "Empty response. Please try again." });
   }
 
-  return res.status(200).json({ reply });
+  return res.status(200).json({ reply, hasContext: true });
 }

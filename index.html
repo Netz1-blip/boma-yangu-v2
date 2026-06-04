@@ -585,12 +585,12 @@ textarea::placeholder{color:var(--text-3);}
       </button>
 
       <div class="s-label" id="nav-label">Quick Topics</div>
-      <button class="nav-item" onclick="quickAsk(this)"><span class="ni">✅</span><span class="nt">Eligibility Checker</span></button>
-      <button class="nav-item" onclick="quickAsk(this)"><span class="ni">💰</span><span class="nt">Housing Levy</span></button>
-      <button class="nav-item" onclick="quickAsk(this)"><span class="ni">📋</span><span class="nt">Application Process</span></button>
-      <button class="nav-item" onclick="quickAsk(this)"><span class="ni">📍</span><span class="nt">County Projects</span></button>
-      <button class="nav-item" onclick="quickAsk(this)"><span class="ni">📱</span><span class="nt">M-Pesa Payments</span></button>
-      <button class="nav-item" onclick="quickAsk(this)"><span class="ni">👷</span><span class="nt">Self-Employed Guide</span></button>
+      <button class="nav-item" onclick="quickAskNav(0)"><span class="ni">✅</span><span class="nt">Eligibility Checker</span></button>
+      <button class="nav-item" onclick="quickAskNav(1)"><span class="ni">💰</span><span class="nt">Housing Levy</span></button>
+      <button class="nav-item" onclick="quickAskNav(2)"><span class="ni">📋</span><span class="nt">Application Process</span></button>
+      <button class="nav-item" onclick="quickAskNav(3)"><span class="ni">📍</span><span class="nt">County Projects</span></button>
+      <button class="nav-item" onclick="quickAskNav(4)"><span class="ni">📱</span><span class="nt">M-Pesa Payments</span></button>
+      <button class="nav-item" onclick="quickAskNav(5)"><span class="ni">👷</span><span class="nt">Self-Employed Guide</span></button>
 
       <div class="s-label" id="county-label">County Filter</div>
       <div class="county-wrap">
@@ -713,6 +713,8 @@ let lastSendTime    = 0;
 let lastUserMessage = '';
 let selectedCounty  = null;
 let chatStarted     = false;
+const THEME_KEY     = 'by-theme';
+const MAX_HISTORY   = 6;
 
 /* ════════════════════════
    CONTENT
@@ -913,9 +915,14 @@ function handleChip(txt) {
   sendMsg();
 }
 
-function quickAsk(btn) {
-  const txt = btn.querySelector('.nt').textContent;
-  setInputValue(txt);
+function quickAskNav(cardIndex) {
+  if (cardIndex === 0) {
+    window.location.href = '/eligibility';
+    return;
+  }
+  const q = C[lang].cards[cardIndex]?.q;
+  if (!q) return;
+  setInputValue(q);
   sendMsg();
   closePanel();
 }
@@ -923,13 +930,28 @@ function quickAsk(btn) {
 /* ════════════════════════
    DARK MODE
 ════════════════════════ */
-function toggleDark() {
-  dark = !dark;
-  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
-  const icon = dark ? '☀️' : '🌙';
-  document.getElementById('dark-btn').textContent = icon;
+function applyTheme(isDark) {
+  dark = isDark;
+  document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+  localStorage.setItem(THEME_KEY, isDark ? 'dark' : 'light');
+  const icon = isDark ? '☀️' : '🌙';
+  const db = document.getElementById('dark-btn');
+  if (db) db.textContent = icon;
   const tdb = document.getElementById('top-dark-btn');
   if (tdb) tdb.textContent = icon;
+}
+
+function toggleDark() {
+  applyTheme(!dark);
+}
+
+function initTheme() {
+  const saved = localStorage.getItem(THEME_KEY);
+  if (saved === 'dark' || saved === 'light') {
+    applyTheme(saved === 'dark');
+  } else {
+    applyTheme(false);
+  }
 }
 
 /* ════════════════════════
@@ -1113,7 +1135,7 @@ async function sendMsg(retryMode = false) {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: history.slice(-12), county: selectedCounty || null })
+      body: JSON.stringify({ messages: history.slice(-MAX_HISTORY), county: selectedCounty || null })
     });
     if (!res.ok) {
       let em = '';
@@ -1129,7 +1151,7 @@ async function sendMsg(retryMode = false) {
     busy = false;
     if (sendBtn)  sendBtn.disabled  = false;
     if (sendBtn2) sendBtn2.disabled = false;
-    addMsg('ai', reply, true);
+    addMsg('ai', reply, !!data.hasContext);
     history.push({ role: 'assistant', content: reply });
     chipRound++;
     addChipsRow();
@@ -1295,6 +1317,7 @@ function setStatus(state) {
 /* ════════════════════════
    INIT
 ════════════════════════ */
+initTheme();
 bindTextarea();
 renderChips(0);
 renderCards();
