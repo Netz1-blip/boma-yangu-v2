@@ -1,10 +1,6 @@
 // Boma Yangu AI v2 - Vercel Serverless Chat Endpoint
-// LLM: Groq llama3-8b-8192 (replaces Cerebras gpt-oss-120b)
-// Retrieval: HF cosine similarity + keyword fallback → Pinecone
-// CHANGES FROM V1:
-//   1. Cerebras → Groq (import + call block only)
-//   2. CEREBRAS_API_URL and CEREBRAS_MODEL constants removed
-//   3. Everything else: untouched
+// LLM: Groq llama-3.3-70b-versatile
+// Retrieval: HuggingFace embedding → Pinecone vector search
 
 import { retrieve, formatContext } from "../lib/retrieval.js";
 import Groq from 'groq-sdk';
@@ -16,7 +12,7 @@ const TEMPERATURE      = 0.3;
 const MAX_HISTORY      = 6;
 const TOP_K            = 5;
 
-// Groq client — replaces Cerebras
+// Groq client
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 // -- Source URL Map -----------------------------------------------------------
@@ -134,7 +130,11 @@ const SYSTEM_PROMPT = [
   "- Deducted monthly by employers and remitted to KRA via iTax.",
   "- Self-employed persons contribute 1.5% of their declared monthly income.",
   "- Levy contributions count toward eligibility and priority scoring for housing allocation.",
-  "- Paybill or remittance details: users should be directed to kra.go.ke or their employer payroll.",
+  "",
+  "M-PESA PAYBILL NUMBERS (OFFICIAL — TWO DIFFERENT PURPOSES):",
+  "- 005500 = Boma Yangu e-wallet (saving toward your deposit — account reference = your National ID number)",
+  "- 222222 = eCitizen/GavaPay gateway (Housing Levy remittance — account reference = BOMA<space><ID number>)",
+  "- These are TWO DIFFERENT paybills for TWO DIFFERENT purposes. Never confuse them.",
   "",
   "ELIGIBILITY CRITERIA:",
   "- Must be a Kenyan citizen with a valid National ID.",
@@ -220,11 +220,11 @@ const SYSTEM_PROMPT = [
   "4. OUT OF SCOPE: If the user asks about something completely unrelated to housing, gently say: 'I am specifically here for Boma Yangu housing questions. For [topic], you may want to check other resources.'",
   "5. SENSITIVE INFO: Never ask users for passwords, M-Pesa PINs, full bank details, or National ID numbers. Direct them to the official portal.",
   "6. CONSISTENCY: If you gave an answer earlier in the conversation, do not contradict it unless the KB context gives new information.",
-  "7. NEVER say 'As an AI language model...' or refer to your own architecture. Just answer like a housing officer would."
+  "7. NEVER say 'As an AI language model...' or refer to your own architecture. Just answer like a housing officer would.",
   "8. M-PESA PAYBILL CLARITY (CRITICAL — NEVER BREAK): Two official paybills exist and must NEVER be confused:",
-"   005500 = Boma Yangu e-wallet savings (for depositing toward your unit — account reference = your National ID number)",
-"   222222 = eCitizen/GavaPay gateway (for Housing Levy remittance — account reference = BOMA<space><ID number>)",
-"   Always name BOTH paybills and explain what each is for. Never give one without the other.",,
+  "   005500 = Boma Yangu e-wallet savings (for depositing toward your unit — account reference = your National ID number)",
+  "   222222 = eCitizen/GavaPay gateway (for Housing Levy remittance — account reference = BOMA<space><ID number>)",
+  "   Always name BOTH paybills and explain what each is for. Never give one without the other.",
 ].join("\n");
 
 // -- Handler ------------------------------------------------------------------
